@@ -27,6 +27,17 @@ export default function AppTabs() {
           renderingMode="template"
         />
       </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="vault">
+        <NativeTabs.Trigger.Label>Vault</NativeTabs.Trigger.Label>
+        {/*
+          The other two tabs ship their own PNGs. This one uses the platform's
+          built-in icon sets instead: `sf` is an SF Symbol on iOS, `md` a
+          Material Symbol on Android. No new asset files, and each platform
+          gets its own native-looking glyph.
+        */}
+        <NativeTabs.Trigger.Icon sf="photo.on.rectangle" md="photo_library" />
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }

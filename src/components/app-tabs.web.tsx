@@ -27,15 +27,33 @@ export default function AppTabs() {
           <TabTrigger name="explore" href="/explore" asChild>
             <TabButton>Explore</TabButton>
           </TabTrigger>
+          <TabTrigger name="vault" href="/vault" asChild>
+            <TabButton>Vault</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>
   );
 }
 
-export function TabButton({ children, isFocused, ...props }: TabTriggerSlotProps) {
+export function TabButton({ children, isFocused, ref, ...props }: TabTriggerSlotProps) {
   return (
-    <Pressable {...props} style={({ pressed }) => pressed && styles.pressed}>
+    <Pressable
+      {...props}
+      /*
+       * expo-router types this slot's ref as `Ref<View>`, meaning "the view
+       * instance". React Native 0.88 renamed that instance type to
+       * `ReactNativeElement` and made `View` the component function itself, so
+       * the two no longer agree by name even though they are the same object
+       * at runtime. Hence the cast, written in terms of what `Pressable`
+       * actually hands back.
+       *
+       * The ref is forwarded rather than dropped on purpose: `TabTrigger`
+       * passes it in order to measure and focus the element, so discarding it
+       * would silence the error by breaking the feature.
+       */
+      ref={ref as React.Ref<React.ComponentRef<typeof Pressable>>}
+      style={({ pressed }) => pressed && styles.pressed}>
       <ThemedView
         type={isFocused ? 'backgroundSelected' : 'backgroundElement'}
         style={styles.tabButtonView}>
