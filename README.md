@@ -25,6 +25,54 @@ In the output, you'll find options to open the app in a
 
 You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
+## Photo Vault (Cloudflare R2 + D1 backend)
+
+A **Photo Vault** feature: create an account, sign in, pick a photo, upload it
+to Cloudflare R2, browse your gallery, delete it. Image bytes live in R2,
+users/sessions/metadata in D1, and a Cloudflare Worker in [`server/`](./server)
+decides who may read what — on every request, including each image.
+
+```bash
+# one-time setup
+cp .env.example .env.local
+cd server && npm install && cp .dev.vars.example .dev.vars
+
+# generate your own token-signing key and put it in server/.dev.vars
+openssl rand -base64 48
+
+cd .. && npm run server:migrate
+
+# run it
+npm run server      # the Worker on 127.0.0.1:8787 (use server:lan for a phone)
+npm start           # Metro, in another terminal
+```
+
+Then open the Vault tab and create an account. Locally, sign-up is open; a
+deployed Worker defaults to invite-only.
+
+The Vault tab needs `expo-image-picker` and `expo-secure-store`, both native
+modules, so it requires a
+[development build](https://docs.expo.dev/develop/development-builds/introduction/)
+(`npx expo run:ios`) rather than Expo Go.
+
+### Verify
+
+```bash
+npm test                 # 155 tests: 107 in the Worker, 48 in the app
+npm run typecheck        # the Expo app
+npm run server:typecheck # the Worker (src and test configs)
+npx eslint .
+```
+
+> ⚠️ **Deploying requires the Workers Paid plan.** The auth endpoints hash
+> passwords with PBKDF2 at 600,000 iterations, which does not fit the free
+> plan's 10 ms CPU budget. Everything local works on any plan.
+
+📖 **[docs/CLOUDFLARE_R2_EXPO_GUIDE.md](./docs/CLOUDFLARE_R2_EXPO_GUIDE.md)** is a
+complete standalone tutorial covering the architecture, local development,
+authentication, testing, security, deployment, and how to research Cloudflare's
+docs yourself.
+
 ## Get a fresh project
 
 When you're ready, run:
