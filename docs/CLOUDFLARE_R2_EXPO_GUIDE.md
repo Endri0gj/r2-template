@@ -1422,7 +1422,7 @@ it.
 ## The commands
 
 ```bash
-npm test                            # both projects (155 tests)
+npm test                            # both projects (164 tests)
 npm test -- --project=worker        # Worker only, inside workerd
 npm test -- --project=app           # the hooks and client, in jsdom
 npm run typecheck                   # the Expo app
@@ -1435,7 +1435,7 @@ Expected output:
 
 ```text
  Test Files  7 passed (7)
-      Tests  155 passed (155)
+      Tests  164 passed (164)
 ```
 
 ## How the Worker tests work
@@ -1494,9 +1494,9 @@ apply` runs. If a migration is wrong, the tests break — which is the whole poi
 
 ## What is covered
 
-**155 tests in total: 107 in the Worker, 48 in the app.**
+**164 tests in total: 104 in the Worker, 60 in the app.**
 
-### Worker — `server/test/`, 107 tests
+### Worker — `server/test/`, 104 tests
 
 `photos.spec.ts` — health; 405s; unknown routes; malformed ids; missing /
 malformed / wrong tokens; auth required on *image reads* specifically; upload
@@ -1564,7 +1564,7 @@ expect(await listObjectKeys()).toEqual([]);   // ← the rollback really ran
 > before it. The tests that are *about* rate limiting deliberately reuse one
 > key.
 
-### App — `src/`, 48 tests
+### App — `src/`, 60 tests
 
 `use-photo-vault.test.ts` (23) — the gallery's full state machine: initial
 loading (and that it is *not* "empty" until the server answers); empty and
@@ -1575,7 +1575,7 @@ success; upload failure **keeping the selection so it can be retried**; a
 cancelled upload showing no error; delete requiring confirmation; a 404 on
 delete converging the UI silently.
 
-`auth.test.ts` (18) — sign-in storing the refresh token and publishing state;
+`auth.test.ts` (21) — sign-in storing the refresh token and publishing state;
 sign-up with and without an invite code; session restore from storage;
 **keeping the refresh token when the failure was the network, discarding it
 when the server rejected it**; token reuse while valid; **early renewal inside
@@ -1583,6 +1583,12 @@ the margin**; the three snapshot-stability tests described below; **five
 concurrent callers coalescing into one refresh**; a failed refresh not getting
 stuck in flight; forced renewal after a 401; sign-out succeeding locally even
 when the server call fails.
+
+`config.test.ts` (9) — resolving the API base URL from each of its sources:
+an explicit env var winning over everything, `hostUri` in Expo Go and
+dev-client builds, **Metro's script URL in a bare debug build**, a bracketed
+IPv6 host, the page hostname on web, and a production build refusing to guess
+at all. This looks like trivial string handling and is not — see the box below.
 
 `client.test.ts` (7) — the bearer header; **a 401 triggering exactly one
 renewal and one retry, with the retry carrying the new token**; giving up after
@@ -1599,7 +1605,7 @@ credential on `/health`; and the image source for a private bucket.
 
 ## What is *not* covered, and what it would take
 
-Being explicit, because "155 tests pass" is not the same as "it works":
+Being explicit, because "164 tests pass" is not the same as "it works":
 
 | Verified how | What |
 |---|---|
@@ -1608,28 +1614,42 @@ Being explicit, because "155 tests pass" is not the same as "it works":
 | ✅ Manually, live `wrangler dev` | Sign-up at the **production** 600k iterations (~66 ms); the JWT's decoded claims; `/auth/me`; 401 without a token; upload with a byte-identical read back (SHA-256 compared); `nosniff`/CSP/CORP headers; ETag→304 with 0 bytes; a hostile filename sanitised out of the key; refresh rotation; **replay of a rotated token revoking the family**; cross-account isolation on read and delete; delete clearing both the D1 row and the R2 object; the auth rate limiter refusing at the 8th attempt with `Retry-After: 60`; the `scheduled()` handler running and logging its report |
 | ✅ Manually, a browser on `expo start --web` | Sign-in form; **account creation through the UI**; the empty state; session **restored from storage across a page reload**; four images loading out of the **private bucket**; the delete confirmation; a confirmed delete removing the tile; sign-out returning to the form and revoking the session server-side |
 | ✅ Config validation | `wrangler deploy --env production --dry-run` resolving prod bucket, prod database, three limiters and `SIGNUP_MODE=invite` — without deploying |
+| ✅ **On a real Android build** (`npx expo run:android`, Pixel 9 Pro emulator, API 36) | `NativeTabs` with the Vault tab and its Material icon; **creating an account by typing into the form**, producing a `pbkdf2-sha256$600000` row in D1 and a session recording `okhttp/4.9.2`; the keyboard lifting the form rather than covering it; three images rendering **out of the private bucket through `expo-image`'s request headers**; pull-to-refresh; **the session surviving a force-stop via the Android Keystore**, with the old refresh token rotated to revoked and a new one live; delete removing the row and its R2 object |
 | ✅ Build | `expo-doctor` 20/20; `tsc` and `eslint` clean across app, server and server tests |
-| ❌ **Not verified** | The screen on **iOS or Android** — only the web renderer was exercised. `NativeTabs`, `expo-image` with request headers, `expo-secure-store` and `SafeAreaView` insets are all platform-specific paths |
-| ❌ **Not verified** | `expo-image-picker` returning a real asset (needs a development build) |
+| ❌ **Not verified: iOS.** | The build does not currently complete on this machine, and not because of this project: compiling `node_modules/expo-modules-jsi/.../JavaScriptObject.swift` under Xcode 26.0.1 fails with `error: sending 'slot' risks causing data races`, a Swift 6 strict-concurrency diagnostic inside Expo's own source. `npx expo install --check` reports dependencies are up to date, so this is an Expo SDK 58 / Xcode 26 toolchain incompatibility. Patching a dependency's Swift to silence a data-race diagnostic is not a fix. The iOS-specific paths — `NativeTabs` on UIKit, the iOS Keychain, `SafeAreaView` insets — are therefore unexercised, although every one of them has an Android counterpart that now is |
+| ❌ **Not verified** | `expo-image-picker` returning a real asset. The simulator's photo library and the picker UI were not driven; uploads were exercised through the API |
 | ❌ **Not verified** | Upload from a physical phone over LAN |
 | ❌ **Not verified** | Anything against a real Cloudflare account — no deploy, no remote migration, no production bucket, no real Cron Trigger firing |
 
-The web run is genuine evidence for the data flow and the state machines, but
-it is **not** evidence that the native UI is right: web uses
-`src/components/app-tabs.web.tsx`, the blob-URL image path and
-`token-store.web.ts`, while iOS and Android use `NativeTabs`, `expo-image`'s
-`headers` and the real Keychain. Those need a device.
+Web and Android exercise genuinely different code — `app-tabs.web.tsx` with
+the blob-URL image path and `localStorage`, against `NativeTabs` with
+`expo-image`'s `headers` and the Android Keystore — so running both is worth
+considerably more than running either twice. iOS shares the native branch with
+Android but not the platform underneath it.
 
 Adding native component tests would mean `jest-expo` plus
 `@testing-library/react-native` — a second test framework, deliberately not
 installed, since the logic worth testing already is.
 
-> One bug was found purely by rendering the app, and it is the kind unit tests
-> do not catch: on web, `Constants.expoConfig.hostUri` is **undefined** (the
-> browser loaded a page, it did not connect to Metro the way a device does), so
-> the API base URL could not be derived and the screen showed a configuration
-> error. `config.ts` now falls back to `window.location.hostname`. Run the
-> thing.
+> **Two bugs were found purely by running the app on something**, and both are
+> the kind no amount of unit testing reaches, because both were about an
+> environment rather than about logic.
+>
+> On web, `Constants.expoConfig.hostUri` is undefined — the browser loaded a
+> page, it did not connect to Metro the way a device does — so the base URL
+> could not be derived and the screen showed a configuration error instead of
+> a gallery. Fixed with a `window.location.hostname` fallback.
+>
+> Then the Android build showed *the same error*, for a different reason: an
+> app built with plain `expo run:android` has no `expo-dev-client`, so it never
+> fetches a manifest, `Constants.executionEnvironment` is `"bare"`, and every
+> Expo manifest field is null. A probe on the device showed the bundle had come
+> from `http://10.0.2.2:8081/...` — the emulator's address for its host
+> machine, and precisely the value needed. `config.ts` now falls back to
+> Metro's script URL, which is in fact the most trustworthy signal of the
+> three: the one address the device has already proved it can reach.
+>
+> Run the thing. Then run it somewhere else.
 
 ## Debugging
 
@@ -2976,7 +2996,7 @@ npm start                                   # Metro
 npx expo run:ios                            # development build (needed once)
 
 # ---- verification -----------------------------------------------------
-npm test                                    # 155 tests, both halves
+npm test                                    # 164 tests, both halves
 npm run typecheck                           # app
 npm run server:typecheck                    # worker
 npx eslint .

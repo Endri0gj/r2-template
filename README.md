@@ -58,7 +58,7 @@ modules, so it requires a
 ### Verify
 
 ```bash
-npm test                 # 155 tests: 107 in the Worker, 48 in the app
+npm test                 # 164 tests: 104 in the Worker, 60 in the app
 npm run typecheck        # the Expo app
 npm run server:typecheck # the Worker (src and test configs)
 npx eslint .
