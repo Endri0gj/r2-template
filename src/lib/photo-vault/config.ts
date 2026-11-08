@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 
 import { PhotoVaultError } from './types';
 
@@ -18,13 +18,10 @@ import { PhotoVaultError } from './types';
  *
  * 1. `EXPO_PUBLIC_PHOTO_VAULT_API_URL` if set. This is what you use for
  *    production, and to point at a tunnel or a colleague's machine.
- * 2. Otherwise, in development, the Metro dev server's own host with the
- *    Worker's port. `Constants.expoConfig.hostUri` is something like
- *    `192.168.1.24:8081` - the address your phone just used to download the
- *    JS bundle, so it is by definition an address the phone can reach.
+ * 2. Otherwise, in development, the address this device used to reach the
+ *    Metro dev server, with the Worker's port.
  *
- * Step 2 exists because `http://localhost:8787` means different things
- * depending on where the code runs:
+ * Step 2 exists because `http://localhost:8787` means four different things:
  *
  *   iOS simulator    shares the Mac's network stack, so localhost works.
  *   Android emulator localhost is the EMULATOR. The host machine is 10.0.2.2.
@@ -33,8 +30,8 @@ import { PhotoVaultError } from './types';
  *   Web browser      localhost works, but the request is cross-origin, so the
  *                    Worker's ALLOWED_ORIGINS must include the Expo dev origin.
  *
- * Deriving the host from Metro gets all four right without you editing a file
- * when your router hands out a new lease.
+ * Deriving the host rather than hardcoding it gets all four right, and keeps
+ * working when your router hands out a new lease.
  *
  * Remember to start the Worker so it listens on more than loopback:
  *   cd server && npm run dev:lan      (wrangler dev --ip 0.0.0.0)
@@ -46,18 +43,62 @@ export interface PhotoVaultConfig {
   baseUrl: string;
 }
 
+/**
+ * The host from the URL Metro served this bundle from.
+ *
+ * This is the fallback that actually carries the weight, and it is worth
+ * knowing why `Constants.expoConfig.hostUri` is not enough on its own.
+ *
+ * `hostUri` is populated from the manifest a dev server hands to Expo Go or to
+ * a dev-client build. An app built with plain `npx expo run:android` /
+ * `run:ios` has no `expo-dev-client`, so it never performs that handshake:
+ * `Constants.executionEnvironment` is `"bare"` and every manifest field,
+ * `hostUri` included, is null. Verified on an Android emulator, where the
+ * screen showed "Set EXPO_PUBLIC_PHOTO_VAULT_API_URL" instead of a sign-in
+ * form.
+ *
+ * The bundle still came from somewhere, though, and React Native records
+ * where. On that same emulator the script URL was
+ * `http://10.0.2.2:8081/.expo/.virtual-metro-entry.bundle?...` - 10.0.2.2
+ * being precisely the address an Android emulator uses for its host machine.
+ * So this is not merely a fallback, it is the most trustworthy signal
+ * available: the one address this device has already proved it can reach.
+ *
+ * `NativeModules.SourceCode` is long-standing React Native API rather than a
+ * documented Expo one, hence the defensive access - if it ever disappears,
+ * this returns null and the explicit env var still works.
+ */
+function metroScriptHost(): string | null {
+  try {
+    const sourceCode = NativeModules?.SourceCode as
+      | { getConstants?: () => { scriptURL?: string }; scriptURL?: string }
+      | undefined;
+    const scriptUrl = sourceCode?.getConstants?.().scriptURL ?? sourceCode?.scriptURL;
+    if (!scriptUrl) return null;
+
+    // Parsed with a regex rather than `new URL()`: React Native's URL
+    // implementation is a partial polyfill, and the bracketed-IPv6 case is
+    // exactly the sort of thing it gets wrong. The brackets are kept, because
+    // `http://[::1]:8787` is how an IPv6 host has to be written back out.
+    const match = /^[a-z][a-z0-9+.-]*:\/\/(\[[^\]]+\]|[^/:]+)/i.exec(scriptUrl);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function metroDerivedBaseUrl(): string | null {
   // Guarded, because guessing a dev host in a production build would hide a
   // missing configuration behind a confusing connection error.
   if (!__DEV__) return null;
 
-  // Native: the host the device used to download the JS bundle. Only present
-  // when running through the Expo CLI during development.
+  // Expo Go and dev-client builds: the host the manifest declared. Bare debug
+  // builds: the host Metro actually served the bundle from.
   const hostUri = Constants.expoConfig?.hostUri;
-  const host = hostUri?.split(':')[0];
+  const host = hostUri?.split(':')[0] ?? metroScriptHost();
   if (host) return `http://${host}:${WORKER_DEV_PORT}`;
 
-  // Web: `hostUri` is not populated, because the browser did not connect to
+  // Web: neither of the above exists, because the browser did not connect to
   // Metro the way a device does - it just loaded a page. The page's own
   // hostname is the dev server's hostname, which is the same thing we want.
   if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.hostname) {
@@ -98,7 +139,7 @@ export function getConfig(): PhotoVaultConfig {
   return cached;
 }
 
-/** Test seam: forget the memoized values. */
+/** Test seam: forget the memoized value. */
 export function resetConfigCache(): void {
   cached = null;
 }
