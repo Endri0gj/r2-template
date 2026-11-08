@@ -1,0 +1,33 @@
+# Copy to `.dev.vars` (which is gitignored) before running `wrangler dev`.
+#
+# `.dev.vars` is how Wrangler supplies SECRETS to the LOCAL Worker. It is the
+# local-only counterpart of `wrangler secret put`, and it is never uploaded.
+# https://developers.cloudflare.com/workers/configuration/secrets/
+
+# ---------------------------------------------------------------------------
+# AUTH_SECRET  (required)
+# ---------------------------------------------------------------------------
+# The HMAC key that signs access tokens. Anyone holding it can mint a valid
+# token for ANY user, so it is the most sensitive value in the system.
+#
+# Generate your own - do not use the placeholder below:
+#   openssl rand -base64 48
+#
+# Use a DIFFERENT value in production, set with:
+#   wrangler secret put AUTH_SECRET --env production
+#
+# Replacing it invalidates every access token immediately and every refresh
+# token at its next use, which is exactly what you want if it ever leaks.
+AUTH_SECRET=dev-only-replace-me-with-openssl-rand-base64-48
+
+# ---------------------------------------------------------------------------
+# SIGNUP_INVITE_CODES  (only used when SIGNUP_MODE=invite)
+# ---------------------------------------------------------------------------
+# Comma-separated codes accepted by POST /auth/signup. Local development runs
+# with SIGNUP_MODE=open (see wrangler.jsonc) so this is unused locally; it is
+# here because production defaults to "invite" and you will need it there.
+#
+# If SIGNUP_MODE is "invite" and this is unset, sign-up is impossible. That is
+# deliberate: the failure direction for a misconfigured gate is "nobody gets
+# in", not "everybody does".
+# SIGNUP_INVITE_CODES=first-code,second-code

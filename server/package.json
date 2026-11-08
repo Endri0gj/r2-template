@@ -1,0 +1,22 @@
+{
+  "name": "photo-vault-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker backend for the Photo Vault example: R2 for image bytes, D1 for metadata.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:lan": "wrangler dev --ip 0.0.0.0",
+    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit",
+    "types": "wrangler types",
+    "migrate:local": "wrangler d1 migrations apply photo-vault-dev --local",
+    "migrate:remote": "wrangler d1 migrations apply photo-vault-prod --remote",
+    "migrations:list": "wrangler d1 migrations list photo-vault-dev --local",
+    "db:local": "wrangler d1 execute photo-vault-dev --local --command",
+    "deploy": "wrangler deploy --env production",
+    "tail": "wrangler tail --env production"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "wrangler": "^4.158.0"
+  }
+}

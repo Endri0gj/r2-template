@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // `cloudflare:test` and the `ProvidedEnv` interface are declared by the
+    // vitest plugin's own types, which the Worker's build does not need.
+    "types": ["../worker-configuration.d.ts", "@cloudflare/vitest-plugin/types"]
+  },
+  "include": ["./**/*.ts", "../src/**/*.ts", "../worker-configuration.d.ts"]
+}

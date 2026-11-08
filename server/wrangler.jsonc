@@ -1,0 +1,207 @@
+/**
+ * Wrangler configuration for the Photo Vault Worker.
+ * Reference: https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * Two environments live in this one file:
+ *
+ *   top level        -> local development (`wrangler dev`). Miniflare simulates the
+ *                       R2 bucket, the D1 database and the rate limiters on disk
+ *                       under `.wrangler/state`. Nothing here touches your
+ *                       Cloudflare account.
+ *   env.production   -> the deployed Worker (`wrangler deploy --env production`).
+ *                       These resources DO exist in your account and cost money.
+ *
+ * The two environments deliberately use DIFFERENT resource names, so a command
+ * aimed at one can never silently hit the other.
+ *
+ * Nothing is inherited from the top level into `env.production`: every binding
+ * and var is repeated on purpose, because a forgotten inherited value is how a
+ * production Worker ends up pointing at a development bucket.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "photo-vault-api",
+  "main": "src/index.ts",
+
+  // Pins the Workers runtime behaviour. Raising this date can change runtime
+  // semantics, so it is an explicit, reviewable decision.
+  // https://developers.cloudflare.com/workers/configuration/compatibility-dates/
+  "compatibility_date": "2026-11-04",
+
+  // Workers Logs. Needed for `wrangler tail` to be useful in production, and
+  // the only way to see the reconciliation job's report.
+  // https://developers.cloudflare.com/workers/observability/logs/workers-logs/
+  "observability": { "enabled": true },
+
+  /**
+   * CPU budget per invocation.
+   *
+   * This is set explicitly because this Worker hashes passwords, and PBKDF2 at
+   * 600,000 iterations costs real CPU (hundreds of milliseconds). The default
+   * on the Paid plan is 30,000 ms, which is already far more than enough - the
+   * value is written down so that the requirement is visible rather than
+   * assumed.
+   *
+   * IMPORTANT: the Workers FREE plan allows 10 ms of CPU per request. Password
+   * hashing does not fit in 10 ms at any safe iteration count, so the auth
+   * endpoints here REQUIRE the Workers Paid plan. See server/src/password.ts.
+   * https://developers.cloudflare.com/workers/platform/limits/#cpu-time
+   */
+  "limits": { "cpu_ms": 30000 },
+
+  /* ---------------------------------------------------------------- *
+   * Local development bindings
+   * ---------------------------------------------------------------- */
+
+  // `binding` is the property name on `env` inside the Worker: env.PHOTOS
+  // https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#create-a-binding
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      "bucket_name": "photo-vault-dev"
+    }
+  ],
+
+  // https://developers.cloudflare.com/d1/get-started/
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "photo-vault-dev",
+      // Ignored in local mode (Miniflare keys local storage off the binding),
+      // but the field is required by the config schema.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  /**
+   * Rate limiters.
+   * https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
+   *
+   * `period` must be exactly 10 or 60. `namespace_id` is any integer unique
+   * within your account - two bindings sharing one id share their counters, so
+   * these are deliberately distinct.
+   *
+   * Read the "what it is NOT" section of server/src/ratelimit.ts before relying
+   * on the numbers: limits are approximate and per Cloudflare location.
+   *
+   * Sizing:
+   *   AUTH     10/min is far above anything a human does and far below what
+   *            password guessing needs.
+   *   UPLOAD   30/min per account. Generous for a person picking photos,
+   *            and it bounds how fast one account can fill your bucket.
+   *   READ     600/min per account. A gallery's first paint is one request
+   *            per thumbnail, so this has to absorb a burst; subsequent
+   *            paints are 304s from the ETag, which are cheap but still
+   *            counted.
+   */
+  "ratelimits": [
+    {
+      "name": "AUTH_LIMITER",
+      "namespace_id": "2001",
+      "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "UPLOAD_LIMITER",
+      "namespace_id": "2002",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "READ_LIMITER",
+      "namespace_id": "2003",
+      "simple": { "limit": 600, "period": 60 }
+    }
+  ],
+
+  /**
+   * Scheduled maintenance: purge dead sessions, delete orphaned R2 objects,
+   * report rows whose bytes have gone missing. See server/src/reconcile.ts.
+   *
+   * 03:17 UTC daily. Odd minute on purpose - every cron written as "0 3 * * *"
+   * across the whole platform fires at the same instant.
+   * https://developers.cloudflare.com/workers/configuration/cron-triggers/
+   */
+  "triggers": { "crons": ["17 3 * * *"] },
+
+  // Plain (non-secret) configuration. Visible in the dashboard - never put
+  // credentials here. Secrets go in `.dev.vars` locally and
+  // `wrangler secret put` in production.
+  "vars": {
+    "MAX_UPLOAD_BYTES": "5242880",
+    // Browsers only. Empty means "send no CORS headers", which is the safe
+    // default for native apps. `npx expo start --web` serves on :8081.
+    "ALLOWED_ORIGINS": "http://localhost:8081,http://127.0.0.1:8081",
+    // OWASP's recommendation for PBKDF2-HMAC-SHA256.
+    "PASSWORD_ITERATIONS": "600000",
+    "ACCESS_TOKEN_TTL_SECONDS": "900",
+    "REFRESH_TOKEN_TTL_SECONDS": "2592000",
+    // "open" locally so you can create an account without juggling an invite
+    // code on your own machine. Production below is NOT open.
+    "SIGNUP_MODE": "open",
+    // Destructive repair, off by default. See server/src/reconcile.ts.
+    "RECONCILE_DELETE_DANGLING_ROWS": "false"
+  },
+
+  /* ---------------------------------------------------------------- *
+   * Production
+   * ---------------------------------------------------------------- *
+   * Fill in `database_id` with the UUID that
+   * `wrangler d1 create photo-vault-prod` prints, and set the two secrets
+   * (AUTH_SECRET, SIGNUP_INVITE_CODES) with `wrangler secret put ... --env
+   * production`. Read part 9 of docs/CLOUDFLARE_R2_EXPO_GUIDE.md before
+   * deploying.
+   */
+  "env": {
+    "production": {
+      "r2_buckets": [
+        {
+          "binding": "PHOTOS",
+          "bucket_name": "photo-vault-prod"
+        }
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "photo-vault-prod",
+          "database_id": "REPLACE_WITH_PRODUCTION_DATABASE_ID",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "AUTH_LIMITER",
+          "namespace_id": "2001",
+          "simple": { "limit": 10, "period": 60 }
+        },
+        {
+          "name": "UPLOAD_LIMITER",
+          "namespace_id": "2002",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "READ_LIMITER",
+          "namespace_id": "2003",
+          "simple": { "limit": 600, "period": 60 }
+        }
+      ],
+      "triggers": { "crons": ["17 3 * * *"] },
+      "limits": { "cpu_ms": 30000 },
+      "vars": {
+        "MAX_UPLOAD_BYTES": "5242880",
+        // No browser origin is allowed in production until you add your own.
+        "ALLOWED_ORIGINS": "",
+        "PASSWORD_ITERATIONS": "600000",
+        "ACCESS_TOKEN_TTL_SECONDS": "900",
+        "REFRESH_TOKEN_TTL_SECONDS": "2592000",
+        // "invite" means a new account needs a code from the
+        // SIGNUP_INVITE_CODES secret. If that secret is unset, nobody can sign
+        // up at all - which is the correct way for this to fail. Change to
+        // "open" only when you have decided that anyone on the internet may
+        // create an account and store 5 MB images in your bucket.
+        "SIGNUP_MODE": "invite",
+        "RECONCILE_DELETE_DANGLING_ROWS": "false"
+      },
+      "observability": { "enabled": true }
+    }
+  }
+}
